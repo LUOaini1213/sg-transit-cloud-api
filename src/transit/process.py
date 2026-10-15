@@ -15,6 +15,10 @@ from .sources import DATASETS, decode_page
 
 GEOHASH_PRECISION = 6
 TTL_DAYS = 30
+# Stop taking new records when less than this much time is left, and hand the
+# rest back to the queue. Without it a slow batch hits the Lambda timeout and
+# every record in it is redelivered, including the ones already written.
+SAFETY_MS = 10_000
 
 
 class BadMessage(Exception):
@@ -128,7 +132,13 @@ def handle_record(record):
 
 def handler(event, context):
     failures = []
-    for record in event.get("Records", []):
+    records = event.get("Records", [])
+    for i, record in enumerate(records):
+        if context is not None and context.get_remaining_time_in_millis() < SAFETY_MS:
+            deferred = [r.get("messageId") for r in records[i:]]
+            common.log("batch_deferred", deferred=len(deferred))
+            failures += [{"itemIdentifier": m} for m in deferred]
+            break
         try:
             handle_record(record)
         except Exception as exc:

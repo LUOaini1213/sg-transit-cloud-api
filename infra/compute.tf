@@ -8,7 +8,7 @@ data "archive_file" "lambda" {
 locals {
   fn_config = {
     ingest  = { handler = "transit.ingest.handler", timeout = 60, memory = 256 }
-    process = { handler = "transit.process.handler", timeout = 60, memory = 256 }
+    process = { handler = "transit.process.handler", timeout = var.process_timeout_s, memory = 256 }
     api     = { handler = "transit.api.handler", timeout = 10, memory = 256 }
   }
   fn_env = {
@@ -28,6 +28,7 @@ resource "aws_cloudwatch_log_group" "fn" {
   for_each          = local.functions
   name              = "/aws/lambda/${local.name}-${each.key}"
   retention_in_days = var.log_retention_days
+  kms_key_id        = aws_kms_key.data.arn
 }
 
 resource "aws_lambda_function" "fn" {
@@ -43,6 +44,10 @@ resource "aws_lambda_function" "fn" {
 
   environment {
     variables = local.fn_env
+  }
+
+  tracing_config {
+    mode = "Active"
   }
 
   logging_config {

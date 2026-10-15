@@ -35,3 +35,19 @@ variable "cors_origin" {
   type        = string
   default     = ""
 }
+
+variable "process_timeout_s" {
+  description = "Timeout of the processing Lambda."
+  type        = number
+  default     = 60
+}
+
+variable "queue_visibility_timeout_s" {
+  description = "Page queue visibility timeout. AWS recommends 6x the consumer timeout; tests shorten both so the DLQ path runs in about a minute."
+  type        = number
+  default     = 360
+  validation {
+    condition     = var.queue_visibility_timeout_s >= var.process_timeout_s
+    error_message = "Visibility timeout must be at least the processing Lambda timeout."
+  }
+}

@@ -1,7 +1,8 @@
 # One role per function. Each policy names the exact resources it touches;
 # scripts/check_iam.py fails the pipeline if a wildcard action or resource
-# slips in (cloudwatch:PutMetricData is the one exception: it has no resource
-# ARN, so it is scoped with a namespace condition instead).
+# slips in. Two exceptions, both because the API has no resource ARNs:
+# cloudwatch:PutMetricData (scoped with a namespace condition) and the X-Ray
+# trace upload actions.
 
 data "aws_iam_policy_document" "lambda_trust" {
   statement {
@@ -24,6 +25,21 @@ locals {
 }
 
 data "aws_iam_policy_document" "ingest" {
+  statement {
+    sid       = "DataKey"
+    actions   = ["kms:Decrypt", "kms:GenerateDataKey"]
+    resources = [aws_kms_key.data.arn]
+    condition {
+      test     = "StringEquals"
+      variable = "kms:ViaService"
+      values   = ["s3.${var.region}.amazonaws.com", "sqs.${var.region}.amazonaws.com", "dynamodb.${var.region}.amazonaws.com"]
+    }
+  }
+  statement {
+    sid       = "Tracing"
+    actions   = ["xray:PutTraceSegments", "xray:PutTelemetryRecords"]
+    resources = ["*"] # X-Ray has no resource-level permissions
+  }
   statement {
     sid       = "Logs"
     actions   = ["logs:CreateLogStream", "logs:PutLogEvents"]
@@ -73,6 +89,21 @@ data "aws_iam_policy_document" "ingest" {
 
 data "aws_iam_policy_document" "process" {
   statement {
+    sid       = "DataKey"
+    actions   = ["kms:Decrypt", "kms:GenerateDataKey"]
+    resources = [aws_kms_key.data.arn]
+    condition {
+      test     = "StringEquals"
+      variable = "kms:ViaService"
+      values   = ["s3.${var.region}.amazonaws.com", "sqs.${var.region}.amazonaws.com", "dynamodb.${var.region}.amazonaws.com"]
+    }
+  }
+  statement {
+    sid       = "Tracing"
+    actions   = ["xray:PutTraceSegments", "xray:PutTelemetryRecords"]
+    resources = ["*"] # X-Ray has no resource-level permissions
+  }
+  statement {
     sid       = "Logs"
     actions   = ["logs:CreateLogStream", "logs:PutLogEvents"]
     resources = [local.log_arn["process"]]
@@ -110,6 +141,21 @@ data "aws_iam_policy_document" "process" {
 }
 
 data "aws_iam_policy_document" "api" {
+  statement {
+    sid       = "DataKey"
+    actions   = ["kms:Decrypt"]
+    resources = [aws_kms_key.data.arn]
+    condition {
+      test     = "StringEquals"
+      variable = "kms:ViaService"
+      values   = ["dynamodb.${var.region}.amazonaws.com"]
+    }
+  }
+  statement {
+    sid       = "Tracing"
+    actions   = ["xray:PutTraceSegments", "xray:PutTelemetryRecords"]
+    resources = ["*"] # X-Ray has no resource-level permissions
+  }
   statement {
     sid       = "Logs"
     actions   = ["logs:CreateLogStream", "logs:PutLogEvents"]

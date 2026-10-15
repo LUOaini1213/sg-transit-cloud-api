@@ -1,5 +1,6 @@
 resource "aws_sns_topic" "alarms" {
-  name = "${local.name}-alarms"
+  name              = "${local.name}-alarms"
+  kms_master_key_id = aws_kms_key.data.arn
 }
 
 locals {
