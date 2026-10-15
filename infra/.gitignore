@@ -1,0 +1,7 @@
+build/
+.terraform/
+*.tfstate
+*.tfstate.*
+localstack_providers_override.tf
+.terraform.lock.hcl.bak
+tfplan*

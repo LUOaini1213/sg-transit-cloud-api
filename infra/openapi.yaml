@@ -1,0 +1,61 @@
+openapi: 3.0.1
+info:
+  title: sg-transit-cloud-api
+  version: "1.0"
+  description: Read-only API over LTA DataMall bus stops and road speed bands.
+paths:
+  /health:
+    get:
+      operationId: health
+      responses:
+        "200": { description: OK }
+      x-amazon-apigateway-integration: &lambda
+        type: aws_proxy
+        httpMethod: POST
+        uri: "${api_uri}"
+  /v1/stops/nearby:
+    get:
+      operationId: nearbyStops
+      parameters:
+        - { name: lat, in: query, required: true, schema: { type: number, minimum: 1.15, maximum: 1.48 } }
+        - { name: lon, in: query, required: true, schema: { type: number, minimum: 103.59, maximum: 104.1 } }
+        - { name: radius_m, in: query, required: false, schema: { type: integer, minimum: 10, maximum: 500, default: 300 } }
+      responses:
+        "200": { description: Stops within the radius, nearest first }
+        "400": { description: Invalid parameters }
+      x-amazon-apigateway-integration: *lambda
+  /v1/stops/{code}:
+    get:
+      operationId: getStop
+      parameters:
+        - { name: code, in: path, required: true, schema: { type: string, pattern: "^[0-9]{5}$" } }
+      responses:
+        "200": { description: One bus stop }
+        "400": { description: Invalid code }
+        "404": { description: Not found }
+      x-amazon-apigateway-integration: *lambda
+  /v1/roads/{link_id}/speeds:
+    get:
+      operationId: roadSpeeds
+      parameters:
+        - { name: link_id, in: path, required: true, schema: { type: string, pattern: "^[0-9]{1,12}$" } }
+        - { name: limit, in: query, required: false, schema: { type: integer, minimum: 1, maximum: 96, default: 12 } }
+      responses:
+        "200": { description: Latest speed-band readings, newest first }
+        "404": { description: No readings }
+      x-amazon-apigateway-integration: *lambda
+  /v1/snapshots:
+    get:
+      operationId: listSnapshots
+      responses:
+        "200": { description: Ingested speed-band snapshots }
+      x-amazon-apigateway-integration: *lambda
+  /v1/snapshots/{snapshot}/congestion:
+    get:
+      operationId: congestion
+      parameters:
+        - { name: snapshot, in: path, required: true, schema: { type: string, pattern: "^[0-9]{8}_[0-9]{4}$" } }
+      responses:
+        "200": { description: Share of links below 20 km/h by road category }
+        "404": { description: Snapshot not ingested }
+      x-amazon-apigateway-integration: *lambda
