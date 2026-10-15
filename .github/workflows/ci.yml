@@ -1,0 +1,152 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  PYTHON_VERSION: "3.12"
+  TERRAFORM_VERSION: "1.15.9"
+  TRIVY_VERSION: "0.74.0"
+  SEMGREP_VERSION: "1.181.0"
+  ZAP_IMAGE: "zaproxy/zap-stable:2.17.0"
+
+jobs:
+  unit:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5.6.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - run: pip install -r requirements.txt
+      - name: Unit tests
+        run: python -m pytest -q
+      - name: Mutation check (every planted bug must be caught)
+        run: python scripts/mutate.py --jobs 4
+      - name: Mutation harness can fail (an equivalent mutant must be reported)
+        run: |
+          if python scripts/mutate.py --control --only none; then
+            echo "harness passed with a surviving control mutant"; exit 1
+          fi
+
+  sast:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5.6.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - run: pip install "semgrep==${SEMGREP_VERSION}"
+      - name: Semgrep (python, terraform, secrets rule packs)
+        run: |
+          semgrep scan --metrics=off --error \
+            --config p/python --config p/terraform --config p/secrets \
+            --json --output semgrep.json .
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: semgrep
+          path: semgrep.json
+
+  trivy:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+      # Installed from the release tarball with a checksum check rather than
+      # through a third-party action.
+      - name: Install Trivy
+        run: |
+          base=https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}
+          curl -sSfLO "$base/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
+          curl -sSfLO "$base/trivy_${TRIVY_VERSION}_checksums.txt"
+          grep " trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz$" "trivy_${TRIVY_VERSION}_checksums.txt" | sha256sum -c -
+          tar xzf "trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz" trivy && sudo mv trivy /usr/local/bin/
+      - name: Trivy (dependencies, IaC misconfiguration, secrets)
+        run: |
+          trivy fs --quiet --scanners vuln,misconfig,secret --exit-code 1 \
+            --format table .
+          trivy fs --quiet --scanners vuln,misconfig,secret \
+            --format json --output trivy.json .
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: trivy
+          path: trivy.json
+
+  deploy-localstack:
+    needs: unit
+    runs-on: ubuntu-24.04
+    services:
+      localstack:
+        # 4.14.0 is the last community image that runs without an auth token.
+        image: localstack/localstack:4.14.0
+        ports:
+          - 4566:4566
+        env:
+          DYNAMODB_IN_MEMORY: "1"
+        volumes:
+          - /var/run/docker.sock:/var/run/docker.sock
+        options: >-
+          --health-cmd "curl -sf http://localhost:4566/_localstack/health"
+          --health-interval 5s --health-timeout 5s --health-retries 30
+    env:
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+      AWS_DEFAULT_REGION: ap-southeast-1
+      AWS_ENDPOINT_URL: http://localhost:4566
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5.6.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Install Terraform, tflocal, awslocal
+        run: |
+          base=https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}
+          curl -sSfLO "$base/terraform_${TERRAFORM_VERSION}_linux_amd64.zip"
+          curl -sSfLO "$base/terraform_${TERRAFORM_VERSION}_SHA256SUMS"
+          grep linux_amd64.zip "terraform_${TERRAFORM_VERSION}_SHA256SUMS" | sha256sum -c -
+          unzip -q "terraform_${TERRAFORM_VERSION}_linux_amd64.zip" terraform && sudo mv terraform /usr/local/bin/
+          pip install -r requirements.txt terraform-local==0.26.0 awscli==1.46.1 awscli-local==0.22.2
+      - name: terraform apply (LocalStack)
+        working-directory: infra
+        run: |
+          tflocal init -input=false
+          tflocal validate
+          /usr/bin/time -f "apply took %es" tflocal apply -auto-approve -input=false -var-file=test.tfvars
+          terraform output -json > "$RUNNER_TEMP/outputs.json"
+          echo "API_BASE=http://localhost:4566/_aws/execute-api/$(terraform output -raw api_id)/$(terraform output -raw stage)" >> "$GITHUB_ENV"
+      - name: IAM least-privilege check on the deployed roles
+        run: python scripts/check_iam.py "$RUNNER_TEMP/outputs.json"
+      - name: Integration tests against the deployed API
+        run: STACK_OUTPUTS="$RUNNER_TEMP/outputs.json" python -m pytest tests/integration -q -rA -s
+      - name: API latency on LocalStack
+        run: mkdir -p reports && python scripts/bench_api.py "$API_BASE" 200 reports/latency.json
+      - name: OWASP ZAP baseline and API scan (DAST)
+        run: |
+          mkdir -p reports && chmod 777 reports
+          python scripts/render_openapi.py "$API_BASE" reports/openapi.json
+          docker run --rm --network host -v "$PWD/reports:/zap/wrk:rw" -v "$PWD/zap:/zap/cfg:ro" "$ZAP_IMAGE" \
+            zap-baseline.py -t "$API_BASE/health" -c /zap/cfg/rules.tsv -J zap-baseline.json -r zap-baseline.html -I
+          docker run --rm --network host -v "$PWD/reports:/zap/wrk:rw" -v "$PWD/zap:/zap/cfg:ro" "$ZAP_IMAGE" \
+            zap-api-scan.py -t /zap/wrk/openapi.json -f openapi -c /zap/cfg/rules.tsv -J zap-api.json -r zap-api.html
+          python scripts/zap_summary.py reports/zap-baseline.json reports/zap-api.json
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: deploy-reports
+          path: reports/
+      - name: terraform destroy
+        if: always()
+        working-directory: infra
+        run: |
+          tflocal destroy -auto-approve -input=false -var-file=test.tfvars
+          left=$(awslocal lambda list-functions --query 'length(Functions)' --output text)
+          tables=$(awslocal dynamodb list-tables --query 'length(TableNames)' --output text)
+          echo "after destroy: functions=$left tables=$tables"
+          test "$left" = "0" && test "$tables" = "0"
