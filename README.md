@@ -1,5 +1,7 @@
 # sg-transit-cloud-api
 
+[![ci](https://github.com/LUOaini1213/sg-transit-cloud-api/actions/workflows/ci.yml/badge.svg)](https://github.com/LUOaini1213/sg-transit-cloud-api/actions/workflows/ci.yml)
+
 A small serverless service on Singapore transport open data: it ingests LTA
 DataMall bus stops and road speed bands, validates them, stores them in
 DynamoDB, and serves a read-only REST API with nearby-stop search and a
@@ -56,8 +58,8 @@ All numbers come from runs of the code in this repository, on LocalStack.
 
 | | |
 |---|---|
-| Resources created by `terraform apply` | 164, in 97-99 s on a GitHub runner |
-| Records through the pipeline | 47,995 (4,126 stops + 7 x 6,267 speed readings), queue drained in 66 s on a GitHub runner (164-482 s on a loaded laptop running WSL) |
+| Resources created by `terraform apply` | 164, in 95-99 s on a GitHub runner |
+| Records through the pipeline | 47,995 (4,126 stops + 7 x 6,267 speed readings), queue drained in 48-66 s on a GitHub runner (164-482 s on a loaded laptop running WSL) |
 | Records rejected by validation | 14 (2 links per snapshot with no reading); all 4,126 stops pass |
 | Unit tests | 50 (moto for S3, SQS, DynamoDB, CloudWatch) |
 | Integration tests against the deployed stack | 14 |
@@ -71,7 +73,15 @@ API latency from the client on LocalStack, 200 sequential requests per
 endpoint after 20 warm-up requests (GitHub runner, from `reports/latency.json`
 in the CI artifacts):
 
-LATENCY_TABLE
+| Endpoint | p50 | p95 | p99 | errors |
+|---|---|---|---|---|
+| `/health` | 13.2 ms | 15.1 ms | 17.5 ms | 0/200 |
+| `/v1/stops/{code}` | 17.4 ms | 19.7 ms | 21.1 ms | 0/200 |
+| `/v1/stops/nearby` (300 m) | 54.6 ms | 63.1 ms | 71.2 ms | 0/200 |
+| `/v1/roads/{id}/speeds` | 17.8 ms | 20.3 ms | 22.2 ms | 0/200 |
+| `/v1/snapshots/{id}/congestion` | 22.0 ms | 26.4 ms | 29.9 ms | 0/200 |
+
+(CI run 38839029755, commit b0c59ba.)
 
 These are emulator numbers. They are useful for catching regressions between
 commits and say nothing about latency on AWS.
