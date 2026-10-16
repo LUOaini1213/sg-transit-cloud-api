@@ -94,10 +94,10 @@ resource "aws_lambda_permission" "apigw" {
 # integration failure) carry the same security headers as the Lambda's.
 locals {
   gateway_headers = {
-    "gatewayresponse.header.X-Content-Type-Options"  = "'nosniff'"
-    "gatewayresponse.header.Cache-Control"           = "'no-store'"
-    "gatewayresponse.header.Content-Security-Policy" = "'default-src ''none''; frame-ancestors ''none'''"
-    "gatewayresponse.header.Strict-Transport-Security" = "'max-age=31536000; includeSubDomains'"
+    "gatewayresponse.header.X-Content-Type-Options"       = "'nosniff'"
+    "gatewayresponse.header.Cache-Control"                = "'no-store'"
+    "gatewayresponse.header.Content-Security-Policy"      = "'default-src ''none''; frame-ancestors ''none'''"
+    "gatewayresponse.header.Strict-Transport-Security"    = "'max-age=31536000; includeSubDomains'"
     "gatewayresponse.header.Cross-Origin-Resource-Policy" = "'same-origin'"
   }
 }

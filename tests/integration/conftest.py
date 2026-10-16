@@ -10,6 +10,7 @@ import pathlib
 import time
 
 import boto3
+import requests
 import pytest
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -27,8 +28,13 @@ def out():
 
 
 @pytest.fixture(scope="session")
-def base(out):
-    return f"{ENDPOINT}/_aws/execute-api/{out['api_id']}/{out['stage']}"
+def base(out, ingested):
+    url = f"{ENDPOINT}/_aws/execute-api/{out['api_id']}/{out['stage']}"
+    # The first call after a long ingest can hit a Lambda cold start on
+    # LocalStack (a new container), which takes longer than the 10 s request
+    # timeout the tests use. Warm the function once with a generous timeout.
+    requests.get(f"{url}/health", timeout=120)
+    return url
 
 
 @pytest.fixture(scope="session")

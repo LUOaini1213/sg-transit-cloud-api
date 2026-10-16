@@ -1,4 +1,3 @@
 *	OUTOFSCOPE	^http://localhost:4566/(_aws(/execute-api(/[a-z0-9]+)?)?|robots\.txt|sitemap\.xml)?$
 10036	IGNORE	(Server header) TwistedWeb is the LocalStack emulator web server, not part of this stack
 10049	INFO	(Storable or non-storable content) informational; API responses send Cache-Control: no-store
-100000	INFO	(Client error response) expected: the scan sends invalid inputs and the API answers 400/404

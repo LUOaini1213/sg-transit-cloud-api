@@ -9,7 +9,7 @@ locals {
   fn_config = {
     ingest  = { handler = "transit.ingest.handler", timeout = 60, memory = 256 }
     process = { handler = "transit.process.handler", timeout = var.process_timeout_s, memory = 256 }
-    api     = { handler = "transit.api.handler", timeout = 10, memory = 256 }
+    api     = { handler = "transit.api.handler", timeout = 29, memory = 256 } # 29 s = API Gateway integration limit
   }
   fn_env = {
     STOPS_TABLE   = aws_dynamodb_table.stops.name

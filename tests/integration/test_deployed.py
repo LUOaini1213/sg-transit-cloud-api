@@ -99,8 +99,7 @@ def test_custom_metrics(out, ingested, manifest):
     # table (see the congestion checks); here the metric must cover them.
     got = rejected_sum()
     assert got >= expected, got
-    print(f"
-RecordsRejected metric sum {got:.0f} for {expected} unique rejected records")
+    print(f"\nRecordsRejected metric sum {got:.0f} for {expected} unique rejected records")
 
 
 def test_structured_logs(out, ingested):

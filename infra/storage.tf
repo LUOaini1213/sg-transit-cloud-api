@@ -303,10 +303,6 @@ resource "aws_sqs_queue" "pages" {
   })
 }
 
-resource "aws_sqs_queue_redrive_allow_policy" "dlq" {
-  queue_url = aws_sqs_queue.dlq.id
-  redrive_allow_policy = jsonencode({
-    redrivePermission = "byQueue"
-    sourceQueueArns   = [aws_sqs_queue.pages.arn]
-  })
-}
+# A redrive-allow policy on the DLQ (only the pages queue may use it) belongs
+# here on AWS. It is left out because LocalStack 4.14 never reports the
+# attribute as removed, so `terraform destroy` waits 20 minutes and fails.
