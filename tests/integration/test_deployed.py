@@ -71,10 +71,19 @@ def test_api_errors_over_http(base):
         assert r.headers["X-Content-Type-Options"] == "nosniff"
         assert "Traceback" not in r.text
     # unknown resources and methods are stopped by API Gateway, before Lambda
-    r = requests.get(base + "/v1/admin", timeout=10)
-    assert r.status_code in (403, 404)
-    assert r.headers.get("X-Content-Type-Options") == "nosniff"  # gateway response headers
+    assert requests.get(base + "/v1/admin", timeout=10).status_code in (403, 404)
     assert requests.post(base + "/health", timeout=10).status_code in (403, 404, 405)
+
+
+def test_gateway_responses_declared(out):
+    """DEFAULT_4XX/5XX carry the security headers on AWS. LocalStack 4.14
+    stores them but does not apply them to its own 403 for unknown routes,
+    so this checks the configuration, not the response."""
+    items = boto3.client("apigateway").get_gateway_responses(restApiId=out["api_id"])["items"]
+    by_type = {i["responseType"]: i.get("responseParameters", {}) for i in items}
+    for t in ("DEFAULT_4XX", "DEFAULT_5XX"):
+        assert by_type[t]["gatewayresponse.header.X-Content-Type-Options"] == "'nosniff'"
+        assert by_type[t]["gatewayresponse.header.Cache-Control"] == "'no-store'"
 
 
 def test_reingest_is_idempotent(out, ingested):

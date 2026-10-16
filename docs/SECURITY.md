@@ -39,8 +39,11 @@ Trivy (IDs are Trivy's AWS check IDs):
 Added without a scanner asking:
 - TLS-only bucket policies on all three buckets.
 - Gateway responses (`DEFAULT_4XX`, `DEFAULT_5XX`) carry the same security
-  headers as the Lambda responses, so a 403 for an unknown route is not a bare
-  response.
+  headers as the Lambda responses, so on AWS a 403 for an unknown route is
+  not a bare response. LocalStack 4.14 stores these settings but does not
+  apply them (checked with a plain request and with an explicit
+  `MISSING_AUTHENTICATION_TOKEN` response), so the integration test checks
+  the stored configuration instead.
 
 ## Accepted findings (suppressed in place, with a comment)
 
