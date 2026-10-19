@@ -48,7 +48,16 @@ paths:
     get:
       operationId: listSnapshots
       responses:
-        "200": { description: Ingested speed-band snapshots }
+        "200":
+          description: Snapshots with processing started; presence alone does not mean completion
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  snapshots:
+                    type: array
+                    items: { $ref: "#/components/schemas/SnapshotProgress" }
       x-amazon-apigateway-integration: *lambda
   /v1/snapshots/{snapshot}/congestion:
     get:
@@ -56,6 +65,40 @@ paths:
       parameters:
         - { name: snapshot, in: path, required: true, schema: { type: string, pattern: "^[0-9]{8}_[0-9]{4}$" } }
       responses:
-        "200": { description: Share of links below 20 km/h by road category }
+        "200":
+          description: Processing completeness and congestion over currently processed pages; partial data remains readable
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SnapshotProgress" }
         "404": { description: Snapshot not ingested }
       x-amazon-apigateway-integration: *lambda
+components:
+  schemas:
+    SnapshotProgress:
+      type: object
+      required: [snapshot, captured_at, status, pages, pending_pages, expected_pages, expected_records]
+      properties:
+        snapshot: { type: string }
+        captured_at: { type: string }
+        status:
+          type: string
+          enum: [complete, partial, unknown]
+          description: Complete requires every expected page and matching record totals; partial has missing pages; unknown has legacy or inconsistent metadata
+        pages:
+          type: integer
+          minimum: 0
+          description: Distinct completed page summaries, not SQS delivery count
+        pending_pages:
+          type: integer
+          minimum: 0
+          description: Claimed pages without successful completion, including interrupted writes; excluded from congestion totals
+        expected_pages:
+          type: integer
+          minimum: 1
+          nullable: true
+          description: Expected page count, or null when unavailable or conflicting
+        expected_records:
+          type: integer
+          minimum: 0
+          nullable: true
+          description: Expected raw record count including rejected records, or null when unavailable or conflicting

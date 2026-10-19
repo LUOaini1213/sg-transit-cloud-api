@@ -4,11 +4,12 @@ The message carries only a pointer to the raw object (claim-check pattern), so
 page size never runs into the 256 KB SQS limit.
 """
 import datetime as dt
+import hashlib
 import json
 import uuid
 
 from . import common
-from .sources import DATASETS, ReplaySource, SourceError
+from .sources import DATASETS, ReplaySource, SourceError, encode_page
 
 SGT = dt.timezone(dt.timedelta(hours=8))
 
@@ -69,12 +70,19 @@ def handler(event, context):
     started = dt.datetime.now(dt.timezone.utc).isoformat()
     messages, records = [], 0
     for page_no, body in src.pages(dataset, snapshot if dataset == "TrafficSpeedBands" else None):
-        key = f"raw/{dataset}/snapshot={snapshot}/page-{page_no:03d}.json"
-        s3.put_object(Bucket=raw_bucket, Key=key, Body=json.dumps(body).encode(),
+        encoded = encode_page(body)
+        digest = hashlib.sha256(encoded).hexdigest()
+        key = f"raw/{dataset}/snapshot={snapshot}/page-{page_no:03d}-{digest}.json"
+        s3.put_object(Bucket=raw_bucket, Key=key, Body=encoded,
                       ContentType="application/json")
         records += len(body["value"])
         messages.append({"run_id": run_id, "dataset": dataset, "snapshot": snapshot,
                          "captured_at": captured_at, "raw_key": key, "page": page_no})
+
+    # Every worker needs the full expected extent, even if it runs before the
+    # remaining SQS batches are sent. Do not count deliveries: retries repeat.
+    for message in messages:
+        message.update(expected_pages=len(messages), expected_records=records)
 
     for i in range(0, len(messages), 10):
         chunk = messages[i:i + 10]
