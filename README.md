@@ -35,8 +35,47 @@ licence, table dictionary and quality rules: [docs/DATA.md](docs/DATA.md).
 | `GET /v1/stops/{code}` | one bus stop |
 | `GET /v1/stops/nearby?lat=&lon=&radius_m=` | stops within 10-500 m, nearest first (geohash GSI, 9-cell query, exact distance filter) |
 | `GET /v1/roads/{link_id}/speeds?limit=` | latest speed-band readings for a road link |
-| `GET /v1/snapshots` | ingested speed-band snapshots |
-| `GET /v1/snapshots/{snapshot}/congestion` | per road category: links, mean band, share below 20 km/h |
+| `GET /v1/snapshots` | speed-band snapshots with processing started, including completeness status |
+| `GET /v1/snapshots/{snapshot}/congestion` | completeness status and per road category: links, mean band, share below 20 km/h |
+
+Both snapshot endpoints include the same progress fields on each snapshot:
+
+| Field | Meaning |
+|---|---|
+| `status` | `complete`: every expected page is present and record totals agree; `partial`: some pages are still missing; `unknown`: old, mixed or conflicting metadata cannot establish completion |
+| `pages` | Number of distinct completed page summaries, independent of delivery count |
+| `pending_pages` | Pages claimed for writing but without a successful completion record; includes interrupted writes |
+| `expected_pages` | Total pages queued by ingestion, or `null` when unavailable/conflicting |
+| `expected_records` | Total raw records in those pages, including rejected records, or `null` when unavailable/conflicting |
+
+Partial summaries remain HTTP 200 and contain only the pages processed so far.
+A snapshot first appears in the list when one page starts writing; presence in
+the list alone does **not** mean completion. A failed/DLQ page leaves the snapshot
+partial until successfully retried. Before writing any rows, a conditional
+DynamoDB write binds the page to its source identity, expected extent and SHA-256
+of the normalized input. A conflicting retry fails before changing data;
+identical concurrent deliveries can safely repeat the deterministic writes.
+Only a final successful write publishes the completed summary. If a worker
+fails halfway through, partial data rows may exist, but its pending page is
+excluded from congestion totals. Retrying the same input recovers it without a
+lease or delivery counter. Changed input needs a new snapshot identity.
+Raw object keys include the SHA-256 of canonical JSON, and exactly those
+canonical bytes are written to S3. Replaying unchanged content keeps the same
+key and bytes; changed content gets a different object instead of replacing
+the prior page's evidence. This hash identifies normalized JSON, not the
+original network response bytes. Already queued legacy paths remain readable;
+an existing page can migrate to a new source path only when its content hash
+matches and its capture/extent are compatible.
+Legacy summaries remain readable as `unknown`; replaying the immutable fixture
+upgrades their metadata. Old summaries without a write state never imply that
+the new input-integrity check has been performed.
+
+Both endpoints follow every DynamoDB Query continuation, including for the
+per-snapshot progress shown by the list. Reads use consistent metadata queries;
+separate requests can naturally show different progress while processing runs.
+Completion describes processing coverage of the ingested pages, not atomic
+capture of the live road network. Listing progress queries each snapshot's page
+partition, so its read cost grows with retained history.
 
 ## Infrastructure (Terraform, `infra/`)
 
@@ -113,6 +152,15 @@ commits and say nothing about latency on AWS.
 
 Details of every scanner finding and how it was fixed or accepted:
 [docs/SECURITY.md](docs/SECURITY.md).
+
+### Snapshot integrity regression (19 Oct 2026)
+
+Local offline checks on Windows/Python 3.11 with the pinned test dependencies:
+**74 unit tests passed**, including **24** snapshot-integrity cases. Against
+the original `2f6a1e9` source, 22 applicable new cases failed as expected; the
+two concurrency tests using the new internal interface were excluded from that
+negative control. The historical LocalStack results above remain unchanged.
+These local checks do not constitute a new deployed-stack or real-AWS run.
 
 ## CI (`.github/workflows/ci.yml`)
 

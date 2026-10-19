@@ -133,21 +133,79 @@ def road_speeds(params, q):
                           "min_kmh": i["min_kmh"], "max_kmh": i["max_kmh"]} for i in resp["Items"]]}
 
 
+def _metadata_items(table, partition):
+    """Query may stop at 1 MB, even without a Limit or a filter."""
+    kw = {"KeyConditionExpression": Key("pk").eq(partition), "ConsistentRead": True}
+    while True:
+        response = table.query(**kw)
+        yield from response["Items"]
+        if not response.get("LastEvaluatedKey"):
+            return
+        kw["ExclusiveStartKey"] = response["LastEvaluatedKey"]
+
+
+def _snapshot_progress(pages):
+    """Count persisted page identities, never SQS deliveries or index writes.
+
+    Old summaries lack an expected extent. Conflicting or mixed metadata also
+    cannot establish completion, even if the number of returned rows matches.
+    """
+    completed = [p for p in pages if p.get("write_state", "complete") == "complete"]
+    result = {"status": "unknown", "pages": len(completed), "pending_pages": len(pages) - len(completed),
+              "expected_pages": None, "expected_records": None}
+    if not pages or any("expected_pages" not in p or "expected_records" not in p for p in pages):
+        return result
+    if any(p.get("write_state") not in {"pending", "complete"} for p in pages):
+        return result
+    extents = {(p["expected_pages"], p["expected_records"]) for p in pages}
+    if len(extents) != 1 or len({p["captured_at"] for p in pages}) != 1:
+        return result
+    expected_pages, expected_records = extents.pop()
+    if any(isinstance(v, bool) or not isinstance(v, (int, Decimal)) or v != int(v)
+           for v in (expected_pages, expected_records)) or expected_pages < 1 or expected_records < 0:
+        return result
+    expected_pages, expected_records = int(expected_pages), int(expected_records)
+    result.update(expected_pages=expected_pages, expected_records=expected_records)
+    numbers = []
+    for page in pages:
+        key = page["sk"]
+        if not re.fullmatch(r"page#[0-9]+", key):
+            return result
+        number = int(key[5:])
+        if key != f"page#{number:03d}" or number >= expected_pages:
+            return result
+        numbers.append(number)
+    if len(set(numbers)) != len(pages):
+        return result
+    total = sum(int(p["total"]) for p in completed)
+    if len(completed) == expected_pages and total == expected_records:
+        result["status"] = "complete"
+    elif len(completed) < expected_pages and total <= expected_records:
+        result["status"] = "partial"
+    return result
+
+
 def list_snapshots(params, q):
-    resp = _table("META_TABLE").query(KeyConditionExpression=Key("pk").eq("snapshots#TrafficSpeedBands"))
-    return {"snapshots": [{"snapshot": i["sk"], "captured_at": i["captured_at"]} for i in resp["Items"]]}
+    table = _table("META_TABLE")
+    snapshots = []
+    for item in _metadata_items(table, "snapshots#TrafficSpeedBands"):
+        pages = list(_metadata_items(table, f"TrafficSpeedBands#{item['sk']}"))
+        snapshots.append({"snapshot": item["sk"], "captured_at": item["captured_at"],
+                          **_snapshot_progress(pages)})
+    return {"snapshots": snapshots}
 
 
 def congestion(params, q):
     snap = params.get("snapshot", "")
     if not SNAPSHOT.match(snap):
         raise ApiError(400, "snapshot must look like YYYYMMDD_HHMM")
-    pages = _table("META_TABLE").query(
-        KeyConditionExpression=Key("pk").eq(f"TrafficSpeedBands#{snap}"))["Items"]
+    pages = list(_metadata_items(_table("META_TABLE"), f"TrafficSpeedBands#{snap}"))
     if not pages:
         raise ApiError(404, "snapshot not ingested")
-    per_cat, totals, reasons = {}, Counter(), Counter()
+    per_cat, totals, reasons = {}, Counter(total=0, accepted=0, rejected=0), Counter()
     for p in pages:
+        if p.get("write_state", "complete") != "complete":
+            continue
         totals.update({"total": int(p["total"]), "accepted": int(p["accepted"]),
                        "rejected": int(p["rejected"])})
         reasons.update({k: int(v) for k, v in p.get("reasons", {}).items()})
@@ -161,7 +219,7 @@ def congestion(params, q):
         mean = sum(int(k) * v for k, v in b.items()) / n
         categories.append({"category": cat, "name": ROAD_CATEGORY.get(cat, "Unknown"), "links": n,
                            "mean_band": round(mean, 3), "share_below_20kmh": round(slow / n, 4)})
-    return {"snapshot": snap, "captured_at": pages[0]["captured_at"], "pages": len(pages),
+    return {"snapshot": snap, "captured_at": pages[0]["captured_at"], **_snapshot_progress(pages),
             **totals, "rejected_reasons": dict(reasons), "categories": categories}
 
 

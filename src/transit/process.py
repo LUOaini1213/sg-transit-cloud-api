@@ -5,13 +5,14 @@ items. Failed messages are reported individually (ReportBatchItemFailures);
 after maxReceiveCount the queue moves them to the dead-letter queue.
 """
 import datetime as dt
+import hashlib
 import json
 from collections import Counter
 from decimal import Decimal
 
 from . import common, geohash
 from .quality import validate_speed, validate_stop
-from .sources import DATASETS, decode_page
+from .sources import DATASETS, decode_page, encode_page
 
 GEOHASH_PRECISION = 6
 TTL_DAYS = 30
@@ -38,8 +39,12 @@ def parse_message(body):
     prefix = f"raw/{msg['dataset']}/"
     if not str(msg["raw_key"]).startswith(prefix) or ".." in msg["raw_key"]:
         raise BadMessage("raw_key outside the raw zone")
-    if not isinstance(msg["page"], int) or msg["page"] < 0:
+    if type(msg["page"]) is not int or msg["page"] < 0:
         raise BadMessage("bad page number")
+    if "expected_pages" in msg or "expected_records" in msg:
+        if (type(msg.get("expected_pages")) is not int or msg["expected_pages"] <= msg["page"]
+                or type(msg.get("expected_records")) is not int or msg["expected_records"] < 0):
+            raise BadMessage("bad snapshot extent")
     return msg
 
 
@@ -89,8 +94,35 @@ def process_page(msg, body, now=None):
     return items, rejected, summary
 
 
-def _store(msg, items, rejected, summary):
+def _store(msg, items, rejected, summary, content_hash):
     ddb = common.resource("dynamodb")
+    meta = ddb.Table(common.env("META_TABLE"))
+    extent = {k: msg[k] for k in ("expected_pages", "expected_records") if k in msg}
+    values = {":captured": msg["captured_at"], ":raw": msg["raw_key"], ":hash": content_hash}
+    no_extent = "attribute_not_exists(expected_pages) AND attribute_not_exists(expected_records)"
+    exact_extent = no_extent
+    claim_extent = no_extent
+    if extent:
+        values.update({":pages": msg["expected_pages"], ":records": msg["expected_records"]})
+        exact_extent = "expected_pages = :pages AND expected_records = :records"
+        claim_extent = f"({no_extent}) OR ({exact_extent})"
+    page = {"pk": f"{msg['dataset']}#{msg['snapshot']}", "sk": f"page#{msg['page']:03d}",
+            "captured_at": msg["captured_at"], "raw_key": msg["raw_key"],
+            "content_sha256": content_hash, **extent}
+    # Bind this page to immutable input atomically BEFORE touching data. An
+    # identical concurrent delivery can safely repeat the same deterministic
+    # writes; a different payload/identity cannot win this condition. Pending
+    # remains retryable after a crash, without a lease or a delivery counter.
+    # Matching content may migrate an old queued raw path to its hash-addressed
+    # path; capture and extent still have to match (or upgrade legacy extent).
+    meta.put_item(Item={**page, "write_state": "pending"},
+                  ConditionExpression="attribute_not_exists(pk) OR (captured_at = :captured AND "
+                                      "(attribute_not_exists(raw_key) OR raw_key = :raw OR content_sha256 = :hash) AND "
+                                      "(attribute_not_exists(content_sha256) OR content_sha256 = :hash) AND "
+                                      f"({claim_extent}))",
+                  ExpressionAttributeValues=values)
+    meta.put_item(Item={"pk": f"snapshots#{msg['dataset']}", "sk": msg["snapshot"],
+                        "captured_at": msg["captured_at"]})
     table_name = common.env("STOPS_TABLE") if msg["dataset"] == "BusStops" else common.env("SPEEDS_TABLE")
     with ddb.Table(table_name).batch_writer() as batch:
         for item in items:
@@ -100,11 +132,10 @@ def _store(msg, items, rejected, summary):
         common.client("s3").put_object(Bucket=common.env("RAW_BUCKET"), Key=key,
                                        Body=json.dumps(rejected, default=str).encode(),
                                        ContentType="application/json")
-    meta = ddb.Table(common.env("META_TABLE"))
-    meta.put_item(Item={"pk": f"{msg['dataset']}#{msg['snapshot']}", "sk": f"page#{msg['page']:03d}",
-                        "captured_at": msg["captured_at"], **_ddb_safe(summary)})
-    meta.put_item(Item={"pk": f"snapshots#{msg['dataset']}", "sk": msg["snapshot"],
-                        "captured_at": msg["captured_at"]})
+    meta.put_item(Item={**page, "write_state": "complete", **_ddb_safe(summary)},
+                  ConditionExpression="content_sha256 = :hash AND captured_at = :captured "
+                                      f"AND raw_key = :raw AND ({exact_extent})",
+                  ExpressionAttributeValues=values)
 
 
 def _ddb_safe(obj):
@@ -122,7 +153,8 @@ def handle_record(record):
     raw = common.client("s3").get_object(Bucket=common.env("RAW_BUCKET"), Key=msg["raw_key"])["Body"].read()
     body = decode_page(raw)
     items, rejected, summary = process_page(msg, body)
-    _store(msg, items, rejected, summary)
+    content_hash = hashlib.sha256(encode_page(body)).hexdigest()
+    _store(msg, items, rejected, summary, content_hash)
     common.put_metrics(msg["dataset"], RecordsAccepted=summary["accepted"],
                        RecordsRejected=summary["rejected"],
                        RecordsWarned=sum(summary["warnings"].values()))

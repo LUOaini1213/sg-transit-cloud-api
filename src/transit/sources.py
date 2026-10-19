@@ -19,6 +19,11 @@ class SourceError(Exception):
     pass
 
 
+def encode_page(body: dict) -> bytes:
+    """Stable bytes for raw-object identity and consumer integrity checks."""
+    return json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+
+
 def decode_page(raw: bytes) -> dict:
     if raw[:2] == b"\x1f\x8b":
         raw = gzip.decompress(raw)
