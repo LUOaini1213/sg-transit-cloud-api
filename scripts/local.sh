@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Local loop on Linux/WSL with Docker: up | deploy | test | scan | down
-# Needs terraform, and `pip install -r requirements.txt terraform-local awscli-local`.
+# Needs terraform 1.15.9 and `pip install -r requirements.txt -r requirements-deploy.txt`.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 export AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test AWS_DEFAULT_REGION=ap-southeast-1

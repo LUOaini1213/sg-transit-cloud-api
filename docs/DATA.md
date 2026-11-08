@@ -7,8 +7,10 @@ Singapore Open Data Licence. DataMall states that use of its datasets and APIs
 constitutes acceptance of that licence and of its API Terms of Service.
 
 The fixtures in `fixtures/datamall/` are real DataMall responses, captured
-with a DataMall account key by a separate project of mine and replayed here
-so the stack needs no key:
+with a DataMall account key by
+[sg-bus-network-monitor](https://github.com/LUOaini1213/sg-bus-network-monitor)
+(`src/datamall.py`; speed bands sampled by `src/sample_speed.sh`) and
+replayed here so the stack needs no key:
 
 | Dataset | Endpoint | Captured | Subset kept | Records |
 |---|---|---|---|---|
@@ -21,6 +23,14 @@ into the DataMall v4 page envelope (`{"odata.metadata": ..., "value": [...]}`,
 500 records per page). The values are unchanged; JSON types for the speed
 fields are reconstructed as strings, which is what the API returns. Speed
 pages are gzipped to keep the repository small.
+
+Rebuilding: the source files are `BusStops_20260926.json`,
+`speedband_links.csv` and `speedbands/sb_20260929_<HHMM>.csv.gz` (seven
+files) in that project's `data/raw/datamall/`. That directory is not
+committed there, so a rebuild needs the original captures. With them,
+`python scripts/build_fixtures.py <that directory>` followed by
+`git diff --exit-code fixtures/` reproduces the committed fixtures byte for
+byte (checked on 2026-11-08 on Windows).
 
 ## Flow and zones
 

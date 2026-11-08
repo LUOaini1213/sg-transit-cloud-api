@@ -1,0 +1,5 @@
+# Deploy tooling for the LocalStack stack (CI installs exactly these).
+# Terraform itself is a binary: 1.15.9, see TERRAFORM_VERSION in .github/workflows/ci.yml.
+terraform-local==0.26.0
+awscli==1.46.1
+awscli-local==0.22.2

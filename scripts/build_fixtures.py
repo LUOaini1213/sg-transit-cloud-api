@@ -1,13 +1,21 @@
 """Build the replay fixtures from captured LTA DataMall payloads.
 
-The captures were taken with a DataMall account key by a separate project
-(bus stops on 2026-09-26, speed bands every ~18 minutes on 2026-09-29).
+The captures were taken with a DataMall account key by
+https://github.com/LUOaini1213/sg-bus-network-monitor (`src/datamall.py`:
+`paged("BusStops")` on 2026-09-26, `speed_bands_snapshot()` every ~18 minutes
+on 2026-09-29). That project keeps them under data/raw/datamall/, which it
+does not commit: BusStops_20260926.json, speedband_links.csv and
+speedbands/sb_<snapshot>.csv.gz.
 Speed bands were stored as compact CSV (LinkID, band, min, max) plus one
 link-geometry table, so this script re-expands them into the DataMall v4 JSON
 page envelope. JSON types for the speed fields are reconstructed (strings, as
 the API returns them); the values are unchanged.
 
 Usage: python scripts/build_fixtures.py <capture_dir>
+
+The output is byte-for-byte deterministic (gzip mtime 0, LF line endings), so
+`git diff --exit-code fixtures/` after a rebuild shows whether the committed
+fixtures still match the captures.
 """
 import csv
 import gzip
@@ -52,7 +60,7 @@ def main(src):
     write_pages(OUT / "BusStops", "BusStops", stops, gz=False)
 
     links = {}
-    with open(src / "speedband_links.csv", newline="") as f:
+    with open(src / "speedband_links.csv", newline="", encoding="utf-8") as f:
         for r in csv.DictReader(f):
             if inside(float(r["StartLat"]), float(r["StartLon"])):
                 links[r["LinkID"]] = r
@@ -74,7 +82,7 @@ def main(src):
         ts = f"{snap[:4]}-{snap[4:6]}-{snap[6:8]}T{snap[9:11]}:{snap[11:13]}:00+08:00"
         write_pages(OUT / "TrafficSpeedBands" / snap, "v4/TrafficSpeedBands", rows, gz=True)
         manifest["snapshots"][snap] = {"captured_at": ts, "records": len(rows)}
-    (OUT / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
+    (OUT / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8", newline="\n")
     print(json.dumps(manifest, indent=2))
 
 

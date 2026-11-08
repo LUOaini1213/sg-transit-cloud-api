@@ -2,16 +2,19 @@
 
 [![ci](https://github.com/LUOaini1213/sg-transit-cloud-api/actions/workflows/ci.yml/badge.svg)](https://github.com/LUOaini1213/sg-transit-cloud-api/actions/workflows/ci.yml)
 
-A small serverless service on Singapore transport open data: it ingests LTA
-DataMall bus stops and road speed bands, validates them, stores them in
-DynamoDB, and serves a read-only REST API with nearby-stop search and a
-congestion summary per snapshot.
-
-**Everything here is deployed to [LocalStack](https://github.com/localstack/localstack)
-4.14 (community edition), an AWS API emulator running in Docker, not to a
-real AWS account.** Terraform uses the normal AWS provider; `tflocal` points
-it at the emulator. What would change for a real account, and what the
-emulator does not prove, is in [docs/REAL_AWS.md](docs/REAL_AWS.md).
+A small serverless service on Singapore transport open data, deployed with
+Terraform to **[LocalStack](https://github.com/localstack/localstack) 4.14
+(community edition), an AWS emulator in Docker, not to a real AWS account**.
+It replays LTA DataMall bus stops and road speed bands through S3, SQS, Lambda
+and DynamoDB and serves a read-only REST API (nearby-stop search, congestion
+per snapshot). In CI, `terraform apply` creates 164 resources, 47,995 replayed
+records go through the pipeline (14 rejected by validation), 14 integration
+tests pass against the deployed API, and the ZAP active scan found one real
+502 (a cold-start timeout), since fixed. Limits: LocalStack community does not
+enforce IAM or apply KMS and bucket policies as AWS does, its latency says
+nothing about AWS, and the speed bands cover a ~3 km central-area box only. Numbers in
+[Results](#results), evidence in [results/](results/ci-2026-10-16/), what
+would change on a real account in [docs/REAL_AWS.md](docs/REAL_AWS.md).
 
 ## What it does
 
@@ -24,10 +27,14 @@ EventBridge schedules (off in tests)
 CloudWatch: structured JSON logs, custom metrics, 6 alarms -> SNS
 ```
 
-The data is real: 4,126 bus stops and seven speed-band snapshots (6,267 road
-links each, Tuesday 29 Sep 2026, 16:41 to 18:28) captured from DataMall with a
-key and committed as replay fixtures, so no key is needed to run it. Source,
-licence, table dictionary and quality rules: [docs/DATA.md](docs/DATA.md).
+The data is real but a geographic subset: 4,126 bus stops (stops between
+1.24-1.47 N and 103.75-104.05 E) and seven speed-band snapshots of the 6,267
+road links that start in a roughly 3 km x 3 km central-area box
+(1.28-1.31 N, 103.83-103.86 E), captured on Tuesday 29 Sep 2026 (16:41 to
+18:28) from DataMall with a key and committed as replay fixtures, so no key
+is needed to run it. Congestion figures therefore describe the central area,
+not all of Singapore. Source, licence, table dictionary and quality rules:
+[docs/DATA.md](docs/DATA.md).
 
 | Endpoint | Returns |
 |---|---|
@@ -35,8 +42,14 @@ licence, table dictionary and quality rules: [docs/DATA.md](docs/DATA.md).
 | `GET /v1/stops/{code}` | one bus stop |
 | `GET /v1/stops/nearby?lat=&lon=&radius_m=` | stops within 10-500 m, nearest first (geohash GSI, 9-cell query, exact distance filter) |
 | `GET /v1/roads/{link_id}/speeds?limit=` | latest speed-band readings for a road link |
-| `GET /v1/snapshots` | ingested speed-band snapshots |
-| `GET /v1/snapshots/{snapshot}/congestion` | per road category: links, mean band, share below 20 km/h |
+| `GET /v1/snapshots` | ingested speed-band snapshots, each with `status` (`complete`, `partial` or `unknown`) and pages processed out of expected |
+| `GET /v1/snapshots/{snapshot}/congestion` | per road category over the central-area links: links, mean band, share below 20 km/h; plus the same `status` |
+
+A snapshot is `complete` when every page that ingest queued has a summary and
+the record totals match, `partial` while pages are still queued or after one
+was parked in the DLQ (the congestion figures then cover only the processed
+pages), and `unknown` for summaries written before ingest recorded the
+expected page count.
 
 ## Infrastructure (Terraform, `infra/`)
 
@@ -55,23 +68,29 @@ licence, table dictionary and quality rules: [docs/DATA.md](docs/DATA.md).
 ## Results
 
 All numbers come from runs of the code in this repository, on LocalStack.
+The CI numbers are committed in [results/ci-2026-10-16/](results/ci-2026-10-16/)
+(extracted from three CI runs by `scripts/ci_evidence.py`), and
+`python scripts/check_readme.py --check`, run in CI, fails if this section or
+the first screen drifts from that evidence, the fixtures, the test suite or
+[docs/SECURITY.md](docs/SECURITY.md).
 
 | | |
 |---|---|
-| Resources created by `terraform apply` | 164, in 95-99 s on a GitHub runner |
-| Records through the pipeline | 47,995 (4,126 stops + 7 x 6,267 speed readings), queue drained in 48-66 s on a GitHub runner (164-482 s on a loaded laptop running WSL) |
+| Resources created by `terraform apply` | 164, in 95-99 s on a GitHub runner (3 runs) |
+| Records through the pipeline | 47,995 (4,126 stops + 7 x 6,267 speed readings), queue drained in 48-66 s on a GitHub runner (3 runs) |
 | Records rejected by validation | 14 (2 links per snapshot with no reading); all 4,126 stops pass |
-| Unit tests | 50 (moto for S3, SQS, DynamoDB, CloudWatch) |
+| Unit tests | 58 (moto for S3, SQS, DynamoDB, CloudWatch) |
 | Integration tests against the deployed stack | 14 |
-| Planted bugs caught (mutation check) | 25 of 25; the first round caught 22, and the three survivors led to stronger tests |
+| Planted bugs caught (mutation check) | 28 of 28, required on every CI run; a control mutant must survive, so the check can fail |
 | Semgrep findings | 4 before, 0 after |
 | Trivy findings | 29 before (9 high, 6 medium, 14 low), 0 after, 3 accepted with a reason |
-| ZAP baseline + OpenAPI active scan | 0 fail, 0 warn after; one real 502 found and fixed (below) |
-| Poison message to DLQ, alarm, SNS notification | about 2 minutes with test timeouts of 30 s |
+| ZAP baseline + OpenAPI active scan | 0 fail, 0 warn in the cited runs, and CI fails on any Medium or High alert not ignored with a reason; one real 502 found and fixed (below) |
+| Poison message to DLQ, alarm, SNS notification | checked end to end by an integration test, with test timeouts of 30 s |
 
 API latency from the client on LocalStack, 200 sequential requests per
-endpoint after 20 warm-up requests (GitHub runner, from `reports/latency.json`
-in the CI artifacts):
+endpoint after 20 warm-up requests (GitHub runner,
+[results/ci-2026-10-16/latency.json](results/ci-2026-10-16/latency.json),
+copied from the run's CI artifact):
 
 | Endpoint | p50 | p95 | p99 | errors |
 |---|---|---|---|---|
@@ -84,7 +103,11 @@ in the CI artifacts):
 (CI run 38839029755, commit b0c59ba.)
 
 These are emulator numbers. They are useful for catching regressions between
-commits and say nothing about latency on AWS.
+commits and say nothing about latency on AWS. They were measured before the
+snapshot `status` field was added. Congestion now also follows query
+pagination, so its row needs a fresh CI run before it describes the current
+code; `/v1/snapshots` (not timed here) now reads each snapshot's page
+summaries as well.
 
 ### Things the checks found
 
@@ -118,22 +141,33 @@ Details of every scanner finding and how it was fixed or accepted:
 
 | Job | Steps |
 |---|---|
-| unit | pytest; mutation check (all 25 planted bugs must be caught); control run with an equivalent mutant that must be reported, so the check itself can fail |
+| unit | pytest; README numbers against the committed evidence (`scripts/check_readme.py --check`); mutation check (every planted bug in `scripts/mutate.py` must be caught); control run with an equivalent mutant that must be reported, so the check itself can fail |
+| unit-windows | pytest and the README check on Windows |
 | sast | Semgrep with `p/python`, `p/terraform`, `p/secrets`; fails on any finding |
 | trivy | Trivy for dependencies, IaC misconfiguration and secrets; fails on any finding |
-| deploy-localstack | LocalStack as a service container; `tflocal apply`; IAM check on the deployed roles; integration tests; latency run; ZAP baseline and OpenAPI scan; `tflocal destroy` and a check that nothing is left |
+| deploy-localstack | LocalStack as a service container; `tflocal apply`; IAM check on the deployed roles; integration tests; latency run; ZAP baseline and OpenAPI scan (both fail on WARN, and `zap_summary.py` fails on any Medium or High alert not ignored in `zap/rules.tsv`); `tflocal destroy` and a check that nothing is left |
 
 Actions are pinned to commit SHAs; Terraform and Trivy binaries are checked
 against their published SHA-256 sums.
 
 ## Run it
 
-Linux or WSL with Docker, Terraform 1.15 and Python 3.12:
+Unit tests, the planted-bug check and the README check need only Python
+3.12, no Docker (CI runs the unit tests and the README check on Ubuntu and
+Windows, the planted-bug check on Ubuntu):
 
 ```bash
-pip install -r requirements.txt terraform-local awscli-local
-python -m pytest -q                 # unit tests, no Docker needed
+pip install -r requirements.txt
+python -m pytest -q                 # unit tests
 python scripts/mutate.py            # planted-bug check
+python scripts/check_readme.py --check
+```
+
+The deployed stack needs Linux or WSL with Docker, Terraform 1.15.9 and the
+pinned deploy tools CI uses:
+
+```bash
+pip install -r requirements.txt -r requirements-deploy.txt
 scripts/local.sh up                 # LocalStack 4.14 in Docker
 scripts/local.sh deploy             # tflocal apply, outputs to /tmp/sgtc-outputs.json
 scripts/local.sh test               # unit, IAM check, integration
@@ -157,7 +191,9 @@ infra/            Terraform and the OpenAPI definition
 fixtures/         captured DataMall pages (replay source)
 tests/unit/       moto-based tests
 tests/integration tests against the deployed stack
-scripts/          check_iam, mutate, bench_api, render_openapi, zap_summary, build_fixtures, local.sh
+scripts/          check_iam, mutate, bench_api, render_openapi, zap_summary, build_fixtures,
+                  check_readme, ci_evidence, local.sh
+results/          CI numbers quoted in this README, kept after the logs expire
 zap/rules.tsv     ZAP rule overrides, each with its reason
 docs/             DATA.md, SECURITY.md, REAL_AWS.md
 ```

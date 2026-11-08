@@ -1,0 +1,98 @@
+[
+  {
+    "run_id": 38836029252,
+    "commit": "7d9bd8787b5c4462a905674f3cfd0c831d173716",
+    "conclusion": "failure",
+    "resources_added": 164,
+    "apply_seconds": 99.12,
+    "ingested_records": 47995,
+    "drain_seconds": 66.0,
+    "mutants_killed": [
+      25,
+      25
+    ],
+    "control_mutants_killed": [
+      0,
+      1
+    ],
+    "iam_check_passed": true,
+    "integration_passed": 12,
+    "integration_failed": 1,
+    "zap_scans": [],
+    "zap_totals": null,
+    "after_destroy": {
+      "functions": 0,
+      "tables": 0
+    }
+  },
+  {
+    "run_id": 38839029755,
+    "commit": "b0c59baa29d48d05fc62e6a86d1fe5f822658e39",
+    "conclusion": "success",
+    "resources_added": 164,
+    "apply_seconds": 95.34,
+    "ingested_records": 47995,
+    "drain_seconds": 47.5,
+    "mutants_killed": [
+      25,
+      25
+    ],
+    "control_mutants_killed": [
+      0,
+      1
+    ],
+    "iam_check_passed": true,
+    "integration_passed": 14,
+    "integration_failed": 0,
+    "zap_scans": [
+      {
+        "fail_new": 0,
+        "warn_new": 0
+      },
+      {
+        "fail_new": 0,
+        "warn_new": 0
+      }
+    ],
+    "zap_totals": "{'Low': 2, 'Informational': 4}",
+    "after_destroy": {
+      "functions": 0,
+      "tables": 0
+    }
+  },
+  {
+    "run_id": 38840962290,
+    "commit": "2f6a1e9d02b4ca1288c0a100903363efefb199af",
+    "conclusion": "success",
+    "resources_added": 164,
+    "apply_seconds": 97.91,
+    "ingested_records": 47995,
+    "drain_seconds": 54.4,
+    "mutants_killed": [
+      25,
+      25
+    ],
+    "control_mutants_killed": [
+      0,
+      1
+    ],
+    "iam_check_passed": true,
+    "integration_passed": 14,
+    "integration_failed": 0,
+    "zap_scans": [
+      {
+        "fail_new": 0,
+        "warn_new": 0
+      },
+      {
+        "fail_new": 0,
+        "warn_new": 0
+      }
+    ],
+    "zap_totals": "{'Low': 2, 'Informational': 4}",
+    "after_destroy": {
+      "functions": 0,
+      "tables": 0
+    }
+  }
+]
