@@ -76,6 +76,12 @@ def handler(event, context):
         messages.append({"run_id": run_id, "dataset": dataset, "snapshot": snapshot,
                          "captured_at": captured_at, "raw_key": key, "page": page_no})
 
+    # Every page message carries the snapshot's expected extent, so the API can
+    # tell a fully processed snapshot from one with pages still queued or parked
+    # in the DLQ.
+    for m in messages:
+        m.update(expected_pages=len(messages), expected_records=records)
+
     for i in range(0, len(messages), 10):
         chunk = messages[i:i + 10]
         resp = sqs.send_message_batch(QueueUrl=queue_url, Entries=[

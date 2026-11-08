@@ -40,6 +40,11 @@ def parse_message(body):
         raise BadMessage("raw_key outside the raw zone")
     if not isinstance(msg["page"], int) or msg["page"] < 0:
         raise BadMessage("bad page number")
+    if "expected_pages" in msg or "expected_records" in msg:
+        pages, records = msg.get("expected_pages"), msg.get("expected_records")
+        if (type(pages) is not int or pages <= msg["page"]
+                or type(records) is not int or records < 0):
+            raise BadMessage("bad expected extent")
     return msg
 
 
@@ -100,9 +105,13 @@ def _store(msg, items, rejected, summary):
         common.client("s3").put_object(Bucket=common.env("RAW_BUCKET"), Key=key,
                                        Body=json.dumps(rejected, default=str).encode(),
                                        ContentType="application/json")
+    # The page summary is written after the data, so its presence means the
+    # page is done. It carries the expected extent from ingest; the API counts
+    # summaries against it to report a snapshot as complete or partial.
+    extent = {k: msg[k] for k in ("expected_pages", "expected_records") if k in msg}
     meta = ddb.Table(common.env("META_TABLE"))
     meta.put_item(Item={"pk": f"{msg['dataset']}#{msg['snapshot']}", "sk": f"page#{msg['page']:03d}",
-                        "captured_at": msg["captured_at"], **_ddb_safe(summary)})
+                        "captured_at": msg["captured_at"], **extent, **_ddb_safe(summary)})
     meta.put_item(Item={"pk": f"snapshots#{msg['dataset']}", "sk": msg["snapshot"],
                         "captured_at": msg["captured_at"]})
 

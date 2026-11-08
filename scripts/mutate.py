@@ -50,6 +50,9 @@ MUTANTS = [
     ("tls-not-enforced", "src/transit/sources.py", 'if not base_url.startswith("https://") and', 'if False and'),
     ("iam-wildcard-blind", "scripts/check_iam.py", 'if a == "*" or a.endswith(":*") or "*" in a:', 'if a == "*":'),
     ("iam-readonly-blind", "scripts/check_iam.py", 'if role == "api":', 'if role == "none":'),
+    ("partial-reported-complete", "src/transit/api.py", 'out["status"] = "partial"', 'out["status"] = "complete"'),
+    ("meta-query-first-page-only", "src/transit/api.py", 'if "LastEvaluatedKey" not in resp:\n            return', 'if True:\n            return'),
+    ("zap-gate-off", "scripts/zap_summary.py", "return 1 if blocking else 0", "return 0"),
 ]
 CONTROL = ("control-comment-only", "src/transit/api.py", "MAX_RADIUS_M = 500", "MAX_RADIUS_M = 500  # unchanged")
 
@@ -58,7 +61,7 @@ def run_mutant(m, pytest_args):
     name, rel, old, new = m
     with tempfile.TemporaryDirectory(prefix=f"mut-{name}-") as tmp:
         tmp = pathlib.Path(tmp)
-        for part in ("src", "tests", "fixtures", "scripts", "pytest.ini"):
+        for part in ("src", "tests", "fixtures", "scripts", "zap", "pytest.ini"):
             src = ROOT / part
             (shutil.copytree if src.is_dir() else shutil.copy)(src, tmp / part)
         target = tmp / rel

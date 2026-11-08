@@ -48,7 +48,7 @@ paths:
     get:
       operationId: listSnapshots
       responses:
-        "200": { description: Ingested speed-band snapshots }
+        "200": { description: "Ingested speed-band snapshots, each with status complete, partial or unknown, pages processed and expected_pages" }
       x-amazon-apigateway-integration: *lambda
   /v1/snapshots/{snapshot}/congestion:
     get:
@@ -56,6 +56,6 @@ paths:
       parameters:
         - { name: snapshot, in: path, required: true, schema: { type: string, pattern: "^[0-9]{8}_[0-9]{4}$" } }
       responses:
-        "200": { description: Share of links below 20 km/h by road category }
+        "200": { description: "Share of links below 20 km/h by road category over the pages processed so far; status says whether that is all expected pages" }
         "404": { description: Snapshot not ingested }
       x-amazon-apigateway-integration: *lambda
