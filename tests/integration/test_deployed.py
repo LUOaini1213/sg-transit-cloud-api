@@ -53,8 +53,10 @@ def test_api_over_http(base, ingested, manifest):
     assert r.status_code == 200 and r.json()["stops"][0]["code"] == "01012"
     snaps = requests.get(f"{base}/v1/snapshots", timeout=10).json()["snapshots"]
     assert [s["snapshot"] for s in snaps] == sorted(manifest["snapshots"])
+    assert all(s["status"] == "complete" and s["pages"] == s["expected_pages"] for s in snaps), snaps
     for s in snaps:
         c = requests.get(f"{base}/v1/snapshots/{s['snapshot']}/congestion", timeout=10).json()
+        assert c["status"] == "complete" and c["expected_records"] == manifest["snapshots"][s["snapshot"]]["records"]
         assert c["total"] == manifest["snapshots"][s["snapshot"]]["records"]
         assert c["rejected"] == fixture_no_reading(s["snapshot"])
     link = requests.get(f"{base}/v1/snapshots/20260929_1753/congestion", timeout=10).json()

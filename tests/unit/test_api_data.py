@@ -68,9 +68,11 @@ def test_road_speeds(loaded):
 def test_snapshots_and_congestion(loaded, manifest):
     status, body, _ = call("/v1/snapshots")
     assert [s["snapshot"] for s in body["snapshots"]] == ["20260929_1735", "20260929_1753"]
+    assert [(s["status"], s["pages"], s["expected_pages"]) for s in body["snapshots"]] == [("complete", 13, 13)] * 2
     status, c, _ = call("/v1/snapshots/{snapshot}/congestion", {"snapshot": "20260929_1753"})
     n = manifest["snapshots"]["20260929_1753"]["records"]
     assert status == 200 and c["total"] == n and c["accepted"] == n - 2 and c["rejected"] == 2
+    assert (c["status"], c["pages"], c["expected_pages"], c["expected_records"]) == ("complete", 13, 13, n)
     assert c["rejected_reasons"] == {"no_reading": 2}
     assert sum(cat["links"] for cat in c["categories"]) == n - 2
     # recompute one category directly from the speeds table
